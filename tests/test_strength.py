@@ -57,3 +57,10 @@ def test_random_letters_are_not_mistaken_for_words():
     # aren't word-like, so they count as random characters.
     assert estimate("Kx8$wq2LmzR4!pQ").score == 4
     assert estimate("CorrectHorseBatteryStaple").bits < estimate("Kx8$wq2LmzR4!pQyT").bits
+
+
+def test_very_long_passwords_dont_overflow():
+    # The generator allows up to 1024 characters; 2 ** bits overflows a float past about 1024 bits.
+    result = estimate("Zq8!vL2#pW9&kR4m" * 40)
+    assert result.score == 4 and result.crack_time == "longer than the universe has existed"
+    assert crack_time(5000) == "longer than the universe has existed"

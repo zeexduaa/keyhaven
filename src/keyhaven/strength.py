@@ -190,6 +190,8 @@ def pool_size(password: str) -> int:
 
 
 def crack_time(bits: float) -> str:
+    if bits > 200:          # 2 ** bits overflows a float past about 1024 bits; anything here is beyond reach
+        return "longer than the universe has existed"
     seconds = 2 ** bits / 2 / GUESSES_PER_SECOND        # on average, half the space is searched
     for unit, size in (("centuries", 3.15e9), ("years", 3.15e7), ("days", 86400), ("hours", 3600), ("minutes", 60)):
         if seconds >= size:
