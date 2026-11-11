@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keyhaven"
+version = "0.1.0"
+description = "A local, encrypted password manager for the command line"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Syed Ali" }]
+keywords = ["password-manager", "security", "encryption", "totp", "cli"]
+dependencies = ["cryptography>=42"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Security :: Cryptography",
+    "Environment :: Console",
+]
+
+[project.scripts]
+keyhaven = "keyhaven.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zeexduaa/keyhaven"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
