@@ -16,6 +16,7 @@ Each platform's own tool is used: pbcopy/pbpaste on macOS, wl-copy/wl-paste
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -36,14 +37,24 @@ class Backend:
     name: str
     copy: list[str]
     paste: list[str]
+    base64: bool = False        # the tool sends and receives base64 (see the PowerShell backend)
 
 
 def _backends() -> list[Backend]:
     if sys.platform == "darwin":
         return [Backend("pbcopy", ["pbcopy"], ["pbpaste"])]
     if sys.platform == "win32":
+        # Windows PowerShell decodes piped text in the console's legacy code page, not UTF-8,
+        # so non-ASCII passwords would be garbled (and never recognised for clearing). The text
+        # travels as base64 instead, which is plain ASCII. Set-Clipboard won't take an empty
+        # string, so clearing uses the Forms API.
         ps = ["powershell", "-NoProfile", "-NonInteractive", "-Command"]
-        return [Backend("powershell", ps + ["$input | Set-Clipboard"], ps + ["Get-Clipboard -Raw"])]
+        copy_script = ("$t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim())); "
+                       "if ($t.Length) { Set-Clipboard -Value $t } "
+                       "else { Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Clipboard]::Clear() }")
+        paste_script = ("$t = Get-Clipboard -Raw; if ($null -eq $t) { $t = '' }; "
+                        "[Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t)))")
+        return [Backend("powershell", ps + [copy_script], ps + [paste_script], base64=True)]
     found = []
     if os.environ.get("WAYLAND_DISPLAY"):
         found.append(Backend("wl-clipboard", ["wl-copy"], ["wl-paste", "--no-newline"]))
@@ -63,7 +74,8 @@ def backend() -> Backend:
 def copy(text: str, tool: Backend | None = None) -> None:
     tool = tool or backend()
     try:
-        subprocess.run(tool.copy, input=text.encode("utf-8"), check=True, timeout=10,
+        data = text.encode("utf-8")
+        subprocess.run(tool.copy, input=base64.b64encode(data) if tool.base64 else data, check=True, timeout=10,
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ClipboardError(f"copying with {tool.name} failed: {exc}") from None
@@ -75,8 +87,13 @@ def paste(tool: Backend | None = None) -> str:
         result = subprocess.run(tool.paste, check=True, timeout=10, capture_output=True)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ClipboardError(f"reading the clipboard with {tool.name} failed: {exc}") from None
-    text = result.stdout.decode("utf-8", errors="replace")
-    return text[:-2] if text.endswith("\r\n") else text      # PowerShell adds a line break
+    data = result.stdout
+    if tool.base64:
+        try:
+            data = base64.b64decode(data.strip(), validate=True)
+        except ValueError:
+            raise ClipboardError(f"{tool.name} returned something unreadable") from None
+    return data.decode("utf-8", errors="replace")
 
 
 def fingerprint(text: str, key: bytes) -> str:

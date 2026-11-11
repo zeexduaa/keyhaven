@@ -277,3 +277,34 @@ def test_changing_a_vault_whose_folder_is_missing_is_a_clear_error(term, capsys,
     for command in (["add", "X", "--no-password"], ["rm", "X", "-y"], ["passwd"], ["set"]):
         assert cli.main(command) == 1
         assert "create one with: keyhaven init" in capsys.readouterr().err
+
+
+def test_base64_backends_carry_any_text(tmp_path):
+    # A stand-in tool that stores and returns exactly what it's given, like the PowerShell
+    # backend, which exchanges base64 so the console code page can't garble anything.
+    import sys
+    store = tmp_path / "board"
+    script = tmp_path / "tool.py"
+    script.write_text("import sys, pathlib\np = pathlib.Path(sys.argv[2])\n"
+                      "if sys.argv[1] == 'in': p.write_bytes(sys.stdin.buffer.read())\n"
+                      "else: sys.stdout.buffer.write(p.read_bytes())\n")
+    tool = clipboard.Backend("fake", [sys.executable, str(script), "in", str(store)],
+                             [sys.executable, str(script), "out", str(store)], base64=True)
+    secret = "pässwörd-日本-🔑\r\n"
+    clipboard.copy(secret, tool)
+    assert store.read_bytes().isascii()
+    assert clipboard.paste(tool) == secret
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="the real Windows clipboard")
+def test_windows_clipboard_round_trip():
+    try:
+        tool = clipboard.backend()
+        clipboard.copy("pässwörd-日本", tool)
+        back = clipboard.paste(tool)
+    except clipboard.ClipboardError as exc:
+        pytest.skip(f"no clipboard on this machine: {exc}")
+    assert back == "pässwörd-日本"
+    key = b"k" * 32
+    assert clipboard.clear_if_unchanged(clipboard.fingerprint("pässwörd-日本", key), key, tool)
+    assert clipboard.paste(tool) == ""
