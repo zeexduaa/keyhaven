@@ -103,5 +103,8 @@ def verify(config: TotpConfig, candidate: str, at: float | None = None, window: 
     """True if ``candidate`` is the code for now or ``window`` periods either side (clock drift)."""
     moment = time.time() if at is None else at
     candidate = candidate.strip().replace(" ", "")
-    return any(hmac.compare_digest(code(config, moment + k * config.period), candidate)
-               for k in range(-window, window + 1))
+    # compare_digest refuses non-ASCII text (TypeError), and a code is only ever ASCII digits.
+    if not (candidate.isascii() and candidate.isdigit() and len(candidate) == config.digits):
+        return False
+    steps = (moment + k * config.period for k in range(-window, window + 1))
+    return any(hmac.compare_digest(code(config, t), candidate) for t in steps if t >= 0)   # no time before 1970

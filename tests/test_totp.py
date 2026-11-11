@@ -68,3 +68,14 @@ def test_seconds_left_and_verify_with_drift():
     previous = totp.code(config, now - 30)
     assert totp.verify(config, current, now) and totp.verify(config, previous, now)
     assert not totp.verify(config, totp.code(config, now - 120), now)
+
+
+def test_verify_edge_cases():
+    config = totp.TotpConfig(RFC4226_SECRET)
+    # Near the start of Unix time the step before would be negative, which HOTP can't encode.
+    assert totp.verify(config, totp.code(config, 5), at=5)
+    # Codes are ASCII digits: anything else is simply wrong, not an error.
+    assert not totp.verify(config, "１２３４５６", at=59)          # full-width digits
+    assert not totp.verify(config, "abcdef", at=59)
+    assert not totp.verify(config, totp.code(config, 59)[:5], at=59)
+    assert totp.verify(config, totp.code(config, 59)[:3] + " " + totp.code(config, 59)[3:], at=59)
