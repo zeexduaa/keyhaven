@@ -22,10 +22,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import __version__, audit, clipboard, generator, strength, totp
+from . import __version__, audit, clipboard, generator, strength, totp, transfer
 from .crypto import CryptoError, KdfParams
 from .entries import Entries, Entry, EntryError
-from .vault import Vault, VaultError, VaultLock, WrongPassword, doc_header, kdf_from_header, parse_document
+from .vault import (Vault, VaultError, VaultLock, WrongPassword, atomic_copy, atomic_write, doc_header,
+                    kdf_from_header, parse_document)
 
 ask_secret = getpass.getpass        # replaced in tests
 ask = input
@@ -375,6 +376,74 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_import(args: argparse.Namespace) -> int:
+    source = Path(args.file).expanduser()
+    try:
+        text = source.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        raise CliError(f"no file at {source}") from None
+    except UnicodeDecodeError:
+        raise CliError(f"{source} isn't a UTF-8 text file") from None
+    if source.suffix.lower() == ".json" or text.lstrip().startswith("{"):
+        fmt, incoming, skipped = "keyhaven-json", transfer.read_json(text), []
+    else:
+        fmt, incoming, skipped = transfer.read_csv(text)
+    with opened(args, write=True) as entries:
+        result = transfer.import_entries(entries, incoming, fmt, skipped)
+        print(f"read {len(incoming)} entries ({fmt} format): {len(result.added)} new, "
+              f"{result.duplicates} already in the vault")
+        for old, new in result.renamed:
+            print(f"  '{old}' was already taken, so it's called '{new}'")
+        for note in result.skipped:
+            print(f"  skipped {note}")
+        if args.dry_run:
+            print("nothing was saved (--dry-run)")
+            return 0
+        if result.added:
+            entries.save()
+            print("saved. " + "Run 'keyhaven audit' to check the imported passwords.")
+    print(f"the file {source} holds your passwords in plain text: delete it once you've checked the import")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    target = Path(args.file).expanduser()
+    if target.exists() and not args.force:
+        raise CliError(f"{target} already exists (use --force to replace it)")
+    fmt = args.format or ("json" if target.suffix.lower() == ".json" else "csv")
+    if not args.yes:
+        print("an export holds every password in plain text: anyone who gets the file can read them all.")
+        if not confirm(f"write a plain-text {fmt.upper()} export to {target}?"):
+            print("nothing exported")
+            return 1
+    with opened(args) as entries:
+        found = entries.search("", args.tag)
+        text = transfer.to_json(found) if fmt == "json" else transfer.to_csv(found)
+    atomic_write(target, text.encode("utf-8"))
+    print(f"exported {len(found)} entries to {target} (readable only by you). Delete it when you're done; "
+          "for an encrypted copy use 'keyhaven backup'.")
+    return 0
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """An encrypted copy, opened with the same master password. Needs no password to make."""
+    path = vault_path(args)
+    if not path.exists():
+        raise CliError(f"no vault at {path}")
+    target = Path(args.file).expanduser()
+    if target.is_dir():
+        from datetime import datetime
+        target = target / f"keyhaven-{datetime.now():%Y-%m-%d-%H%M%S}.json"
+    if target.exists() and not args.force:
+        raise CliError(f"{target} already exists (use --force to replace it)")
+    parse_document(path.read_bytes())          # don't copy a damaged file over a good backup
+    with VaultLock(path):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_copy(path, target)
+    print(f"backed up to {target}; it opens with the master password the vault has now")
+    return 0
+
+
 def cmd_tags(args: argparse.Namespace) -> int:
     with opened(args) as entries:
         tags = entries.tags()
@@ -545,6 +614,24 @@ def build_parser() -> argparse.ArgumentParser:
                    help="call passwords older than this old (default 365, 0 to skip)")
     p.set_defaults(run=cmd_audit)
 
+    p = sub.add_parser("import", help="add entries from a Bitwarden, Chrome, Firefox, 1Password or keyhaven export")
+    p.add_argument("file")
+    p.add_argument("-n", "--dry-run", action="store_true", help="show what would be imported, save nothing")
+    p.set_defaults(run=cmd_import)
+
+    p = sub.add_parser("export", help="write entries to a plain-text CSV or JSON file")
+    p.add_argument("file")
+    p.add_argument("--format", choices=["csv", "json"], help="default: from the file name, else csv")
+    p.add_argument("-t", "--tag", help="only entries with this tag")
+    p.add_argument("--force", action="store_true", help="replace an existing file")
+    p.add_argument("-y", "--yes", action="store_true", help="don't ask")
+    p.set_defaults(run=cmd_export)
+
+    p = sub.add_parser("backup", help="copy the encrypted vault (to a file or a folder)")
+    p.add_argument("file")
+    p.add_argument("--force", action="store_true", help="replace an existing file")
+    p.set_defaults(run=cmd_backup)
+
     p = sub.add_parser("tags", help="list tags")
     p.set_defaults(run=cmd_tags)
 
@@ -573,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
         print("keyhaven: wrong master password", file=sys.stderr)
         return 2
     except (CliError, VaultError, EntryError, CryptoError, totp.TotpError, generator.GeneratorError,
-            clipboard.ClipboardError) as exc:
+            clipboard.ClipboardError, transfer.TransferError) as exc:
         print(f"keyhaven: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

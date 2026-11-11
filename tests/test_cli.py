@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 
 import pytest
 
@@ -218,3 +219,26 @@ def test_audit_command(vault, term, capsys):
     run(term, ["rm", "B", "-y"])
     assert run(term, ["audit"]) == 0
     assert "no problems found" in capsys.readouterr().out
+
+
+def test_import_export_and_backup(vault, term, capsys, tmp_path):
+    source = tmp_path / "chrome.csv"
+    source.write_text("name,url,username,password,note\nReddit,https://reddit.com,ada,r3dd1t-Pass,\n")
+    assert run(term, ["import", str(source), "--dry-run"]) == 0
+    assert "1 new" in capsys.readouterr().out
+    assert run(term, ["list"]) == 0 and "no entries" in capsys.readouterr().out
+    assert run(term, ["import", str(source)]) == 0
+    assert "delete it" in capsys.readouterr().out
+
+    out = tmp_path / "export.csv"
+    assert run(term, ["export", str(out)], answers=["n"]) == 1 and not out.exists()
+    assert run(term, ["export", str(out)], answers=["y"]) == 0
+    assert "r3dd1t-Pass" in out.read_text()
+    assert run(term, ["export", str(out), "-y"]) == 1          # won't overwrite
+    if os.name == "posix":
+        assert out.stat().st_mode & 0o077 == 0
+
+    term.secrets = []
+    assert cli.main(["backup", str(tmp_path)]) == 0
+    copies = list(tmp_path.glob("keyhaven-*.json"))
+    assert len(copies) == 1 and copies[0].read_bytes() == vault.read_bytes()
