@@ -93,12 +93,13 @@ def opened(args: argparse.Namespace, write: bool = False) -> Iterator[Entries]:
     """Opens the vault (asking for the master password). With write=True the vault is locked
     for the whole command, so two keyhaven processes can't overwrite each other's changes."""
     path = vault_path(args)
+    # Check before locking: the lock file goes next to the vault, and its folder may not exist.
+    if not path.exists():
+        raise CliError(f"no vault at {path}; create one with: keyhaven init")
     lock = VaultLock(path) if write else None
     if lock:
         lock.__enter__()
     try:
-        if not path.exists():
-            raise CliError(f"no vault at {path}; create one with: keyhaven init")
         for attempt in range(3):
             try:
                 vault = Vault.open(path, ask_secret("master password: "))

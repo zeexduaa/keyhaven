@@ -242,3 +242,10 @@ def test_import_export_and_backup(vault, term, capsys, tmp_path):
     assert cli.main(["backup", str(tmp_path)]) == 0
     copies = list(tmp_path.glob("keyhaven-*.json"))
     assert len(copies) == 1 and copies[0].read_bytes() == vault.read_bytes()
+
+
+def test_changing_a_vault_whose_folder_is_missing_is_a_clear_error(term, capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYHAVEN_VAULT", str(tmp_path / "no" / "such" / "folder" / "vault.json"))
+    for command in (["add", "X", "--no-password"], ["rm", "X", "-y"], ["passwd"], ["set"]):
+        assert cli.main(command) == 1
+        assert "create one with: keyhaven init" in capsys.readouterr().err
