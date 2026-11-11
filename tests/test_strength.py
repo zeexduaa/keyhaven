@@ -1,0 +1,52 @@
+import pytest
+
+from keyhaven.strength import crack_time, estimate
+
+
+@pytest.mark.parametrize("password", [
+    "", "password", "123456", "qwertyuiop", "P@ssw0rd1", "Password2024!", "letmein!!", "aaaaaaaaaaaa",
+    "abcabcabcabc", "MyDogRex2015", "sunflowerpurple",
+])
+def test_weak_passwords(password):
+    assert estimate(password).score <= 1, password
+
+
+@pytest.mark.parametrize("password", [
+    "correct horse battery staple", "jogevi-mugire-ruveko-buboro-nuzeke", "YxQT^^1&pD5],5bm[wtw",
+])
+def test_strong_passwords(password):
+    assert estimate(password).score >= 3, password
+
+
+def test_classic_comparison():
+    # The xkcd comparison: a mangled word is weak, four random words are strong.
+    assert estimate("Tr0ub4dor&3").bits < 40 < 60 < estimate("correct horse battery staple").bits
+
+
+def test_warnings_explain_what_was_found():
+    assert "one of the most common passwords" in estimate("password").warnings[0]
+    assert "small changes" in estimate("P4ssword!").warnings[0]
+    assert "it has a keyboard pattern" in estimate("ytrewq!9Kz#x").warnings     # qwerty backwards
+    assert "it has a sequence like abcd or 1234" in estimate("lmnopq!9Kz#x").warnings
+    assert "it repeats characters or chunks" in estimate("xxxxxx!9Kq#z").warnings
+    assert "it has a year, which is easy to guess" in estimate("Kq#z!x1987").warnings
+
+
+def test_personal_details_count_against_it():
+    plain = estimate("lovelace!K9x")
+    personal = estimate("lovelace!K9x", ["ada.lovelace@example.com"])
+    assert personal.bits < plain.bits
+    assert "it contains your name, email or the site's name" in personal.warnings
+
+
+def test_short_passwords_are_capped_and_suggestions_given():
+    s = estimate("zK8#mQ2v")
+    assert s.score <= 2 and any("longer" in tip for tip in s.suggestions)
+    assert any("keyhaven generate" in tip for tip in estimate("password").suggestions + estimate("abc12").suggestions)
+
+
+def test_crack_times():
+    assert crack_time(0) == "instantly"
+    assert crack_time(40) == "less than a minute"
+    assert "days" in crack_time(55)
+    assert crack_time(200) == "longer than the universe has existed"
