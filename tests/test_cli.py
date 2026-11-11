@@ -201,12 +201,40 @@ def test_clipboard_clears_only_its_own_text(monkeypatch):
     board = {"text": ""}
     monkeypatch.setattr(clipboard, "copy", lambda text, tool=None: board.update(text=text))
     monkeypatch.setattr(clipboard, "paste", lambda tool=None: board["text"])
-    tool = clipboard.Backend("fake", [], [])
+    tool, key = clipboard.Backend("fake", [], []), b"k" * 32
     clipboard.copy("s3cret", tool)
-    assert clipboard.clear_if_unchanged(clipboard.fingerprint("s3cret"), tool) and board["text"] == ""
+    assert clipboard.clear_if_unchanged(clipboard.fingerprint("s3cret", key), key, tool) and board["text"] == ""
     clipboard.copy("something you copied since", tool)
-    assert not clipboard.clear_if_unchanged(clipboard.fingerprint("s3cret"), tool)
+    assert not clipboard.clear_if_unchanged(clipboard.fingerprint("s3cret", key), key, tool)
     assert board["text"] == "something you copied since"
+
+
+def test_the_clearing_helper_never_sees_the_secret_on_its_command_line(monkeypatch):
+    import io
+    started = {}
+
+    class FakeHelper:
+        def __init__(self, args, **options):
+            started["args"] = args
+            self.stdin = io.BytesIO()
+            self.stdin.close = lambda: started.update(stdin=self.stdin.getvalue().decode())
+
+    monkeypatch.setattr(clipboard, "backend", lambda: clipboard.Backend("fake", [], []))
+    monkeypatch.setattr(clipboard, "copy", lambda text, tool=None: None)
+    monkeypatch.setattr(clipboard.subprocess, "Popen", FakeHelper)
+    clipboard.copy_and_clear_later("hunter2", 20)
+    plain_hash = __import__("hashlib").sha256(b"hunter2").hexdigest()
+    assert started["args"][-2:] == ["--clear", "20"]
+    assert not any("hunter2" in a or plain_hash in a for a in started["args"])
+    key_hex, sent = started["stdin"].split()
+    assert sent == clipboard.fingerprint("hunter2", bytes.fromhex(key_hex)) and sent != plain_hash
+
+    # And the helper side reads that line back.
+    cleared = []
+    monkeypatch.setattr(clipboard.time, "sleep", lambda s: None)
+    monkeypatch.setattr(clipboard, "clear_if_unchanged", lambda fp, key: cleared.append((fp, key)))
+    assert clipboard._main(["--clear", "20"], io.StringIO(started["stdin"])) == 0
+    assert cleared == [(sent, bytes.fromhex(key_hex))]
 
 
 def test_audit_command(vault, term, capsys):

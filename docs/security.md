@@ -80,8 +80,9 @@ hand-written.
 - `copy` puts the secret on the clipboard and starts a background helper that
   clears it after 20 seconds (`keyhaven set clipboard_seconds N`). The helper
   only clears the clipboard if it still holds that secret, so it won't wipe
-  something you copied since. The helper is given a SHA-256 hash of the
-  secret, never the secret itself.
+  something you copied since. The helper never gets the secret: it gets an
+  HMAC of it under a random one-time key, through a pipe rather than its
+  command line, which other users can see.
 - `export` writes plain text and needs an explicit yes. It won't overwrite an
   existing file and creates the file readable only by you. `import` reminds
   you to delete the plain-text file it read.
