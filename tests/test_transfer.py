@@ -70,3 +70,15 @@ def test_round_trips(tmp_path, fast_kdf):
     assert restored[0].fields == {"pin": "1234"} and restored[0].id != original[0].id
     with pytest.raises(transfer.TransferError, match="isn't a keyhaven export"):
         transfer.read_json(json.dumps({"entries": []}))
+
+
+def test_secure_notes_are_not_mistaken_for_duplicates(tmp_path, fast_kdf):
+    notes = ("folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n"
+             ",,note,Wifi codes,home: abc123,,0,,,,\n"
+             ",,note,Passport number,X1234567,,0,,,,\n"
+             ",,note,Recovery codes,1111 2222,,0,,,,\n")
+    entries = Entries(Vault.create(tmp_path / "v.json", "pw", fast_kdf()))
+    first = transfer.import_entries(entries, transfer.read_csv(notes)[1], "bitwarden")
+    assert len(first.added) == 3 and first.duplicates == 0
+    again = transfer.import_entries(entries, transfer.read_csv(notes)[1], "bitwarden")
+    assert not again.added and again.duplicates == 3

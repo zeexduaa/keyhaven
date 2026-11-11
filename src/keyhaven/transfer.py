@@ -127,14 +127,24 @@ def read_csv(text: str) -> tuple[str, list[Entry], list[str]]:
     return fmt, entries, skipped
 
 
+def _signature(entry: Entry) -> tuple[str, ...]:
+    """What makes two entries the same login. Entries without login details (secure notes) all
+    share an empty URL, username and password, so for those the title and notes decide."""
+    login = (entry.url.strip().lower(), entry.username.strip().lower(), entry.password)
+    if any(login):
+        return ("login", *login)
+    return ("note", entry.title.strip().lower(), entry.notes)
+
+
 def import_entries(target: Entries, incoming: list[Entry], fmt: str, skipped: list[str] | None = None) -> ImportResult:
-    """Adds entries; identical ones are skipped and title clashes get a number: 'GitHub (2)'."""
+    """Adds entries; identical ones are skipped and title clashes get a number: 'GitHub (2)'.
+    The same login is recognised by URL, username and password, a note by its title and text."""
     result = ImportResult(fmt, skipped=list(skipped or []))
     existing = list(target)
-    signatures = {(e.url.lower(), e.username.lower(), e.password) for e in existing}
+    signatures = {_signature(e) for e in existing}
     titles = {e.title.lower() for e in existing}
     for entry in incoming:
-        signature = (entry.url.lower(), entry.username.lower(), entry.password)
+        signature = _signature(entry)
         if signature in signatures:
             result.duplicates += 1
             continue
