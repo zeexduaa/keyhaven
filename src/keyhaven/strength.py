@@ -128,17 +128,26 @@ def estimate(password: str, user_inputs: list[str] | None = None) -> Strength:
 
     # 5. Runs of letters might be dictionary words. Without shipping a dictionary, charge each run
     #    at most what one word from a large one (50,000 words) would cost, so real-word passphrases
-    #    aren't mistaken for random letters. (This underrates invented words; it errs on the safe side.)
+    #    aren't mistaken for random letters. Only runs that look like words count (see _word_like);
+    #    the rest, like the letters of a generated password, stay random.
     #    Words are found after undoing l33t (Tr0ub4dor -> troubador); LEET maps one character to one,
     #    so positions line up with the original password.
     import re
     for m in re.finditer(r"[a-z]{4,}", core):
-        start, end = m.span()
-        original = password[start:end]
-        substitutions = sum(1 for a, b in zip(original.lower(), m.group()) if a != b)
-        letters = 52 if (original.lower() != original and original.upper() != original) else 26
-        as_word = math.log2(50_000) + _caps_bits(original) + min(substitutions, 3)
-        charge(start, end, min((end - start) * math.log2(letters), as_word))
+        # CamelCase is several words: split where a lower-case letter is followed by a capital.
+        cuts = [m.start()] + [i for i in range(m.start() + 1, m.end())
+                              if password[i - 1].islower() and password[i].isupper()] + [m.end()]
+        for start, end in zip(cuts, cuts[1:]):
+            original, letters_only = password[start:end], core[start:end]
+            if end - start < 2 or not _word_like(original, letters_only):
+                continue
+            substitutions = sum(1 for a, b in zip(original.lower(), letters_only) if a != b)
+            letters = 52 if (original.lower() != original and original.upper() != original) else 26
+            # Short words come from much smaller lists: there are only about 200 two-letter
+            # and 1,000 three-letter words in common use.
+            dictionary = {2: 200, 3: 1_000}.get(end - start, 50_000)
+            charge(start, end, min((end - start) * math.log2(letters),
+                                   math.log2(dictionary) + _caps_bits(original) + min(substitutions, 3)))
 
     # 6. Everything else counts as random characters, except that repeating a separator
     #    (the spaces in "correct horse battery staple") adds almost nothing.
@@ -189,6 +198,22 @@ def crack_time(bits: float) -> str:
                 return "longer than the universe has existed" if amount > 1.4e8 else "millions of years"
             return f"about {amount:,.0f} {unit}" if amount >= 2 else f"about 1 {unit[:-1] if unit != 'centuries' else 'century'}"
     return "less than a minute" if seconds >= 1 else "instantly"
+
+
+def _word_like(original: str, letters: str) -> bool:
+    """Could this run be a real word? Words are written lower, Title or UPPER case, have vowels,
+    and don't start with more than three consonants or bunch up more than four (strengths has
+    "ngths", but random letters like "lmzrpq" fail). Runs that fail are counted as random letters."""
+    if not (original.islower() or original.isupper() or (original[:1].isupper() and original[1:].islower())):
+        if not any(not c.isalpha() for c in original):       # l33t forms keep the case check loose
+            return False
+    vowels = sum(c in "aeiouy" for c in letters)
+    if vowels == 0 or vowels / len(letters) < 0.12:
+        return False
+    import re
+    clusters = re.findall(r"[^aeiouy]+", letters)
+    leading = re.match(r"[^aeiouy]*", letters).group()
+    return len(leading) <= 3 and all(len(c) <= 5 for c in clusters)
 
 
 def _caps_bits(word: str) -> float:

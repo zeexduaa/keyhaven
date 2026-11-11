@@ -50,3 +50,10 @@ def test_crack_times():
     assert crack_time(40) == "less than a minute"
     assert "days" in crack_time(55)
     assert crack_time(200) == "longer than the universe has existed"
+
+
+def test_random_letters_are_not_mistaken_for_words():
+    # Letter runs from a generated password ("LmzR4!pQ" reads as "lmzraipq" after undoing l33t)
+    # aren't word-like, so they count as random characters.
+    assert estimate("Kx8$wq2LmzR4!pQ").score == 4
+    assert estimate("CorrectHorseBatteryStaple").bits < estimate("Kx8$wq2LmzR4!pQyT").bits
