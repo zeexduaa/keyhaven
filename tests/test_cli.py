@@ -206,3 +206,15 @@ def test_clipboard_clears_only_its_own_text(monkeypatch):
     clipboard.copy("something you copied since", tool)
     assert not clipboard.clear_if_unchanged(clipboard.fingerprint("s3cret"), tool)
     assert board["text"] == "something you copied since"
+
+
+def test_audit_command(vault, term, capsys):
+    run(term, ["add", "A"], [STRONG, STRONG])
+    run(term, ["add", "B"], [STRONG, STRONG])
+    capsys.readouterr()
+    assert run(term, ["audit"]) == 1
+    out = capsys.readouterr().out
+    assert "used in more than one entry (2)" in out and "2 of 2 entries need attention" in out
+    run(term, ["rm", "B", "-y"])
+    assert run(term, ["audit"]) == 0
+    assert "no problems found" in capsys.readouterr().out

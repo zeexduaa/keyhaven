@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import __version__, clipboard, generator, strength, totp
+from . import __version__, audit, clipboard, generator, strength, totp
 from .crypto import CryptoError, KdfParams
 from .entries import Entries, Entry, EntryError
 from .vault import Vault, VaultError, VaultLock, WrongPassword, doc_header, kdf_from_header, parse_document
@@ -351,6 +351,30 @@ def cmd_totp(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    with opened(args) as entries:
+        if args.online:
+            print("checking breaches online: only the first 5 characters of each password's SHA-1 hash are sent")
+        report = audit.audit(entries, max_age_days=args.max_age, online=args.online)
+    if report.online_error:
+        print(f"note: {report.online_error}", file=sys.stderr)
+    if not report.findings:
+        print(f"checked {report.checked} passwords: no problems found" +
+              ("" if args.online else " (add --online to also check known breaches)"))
+        return 0
+    titles = {"breached": "found in data breaches", "reused": "used in more than one entry",
+              "weak": "weak", "similar": "nearly the same as another entry's", "old": "old"}
+    for kind, heading in titles.items():
+        found = report.by_kind(kind)
+        if found:
+            print(f"\n{heading} ({len(found)}):")
+            for finding in found:
+                print(f"  {finding.entry.title}: {finding.detail}")
+    print(f"\n{report.entries_with_problems} of {report.checked} entries need attention. "
+          "Change a password with: keyhaven edit <entry> --generate")
+    return 1
+
+
 def cmd_tags(args: argparse.Namespace) -> int:
     with opened(args) as entries:
         tags = entries.tags()
@@ -513,6 +537,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("totp", aliases=["2fa"], help="an entry's current two-factor code")
     p.add_argument("entry")
     p.set_defaults(run=cmd_totp)
+
+    p = sub.add_parser("audit", help="find weak, reused, old (and with --online, breached) passwords")
+    p.add_argument("--online", action="store_true",
+                   help="also check Have I Been Pwned (sends only a 5-character hash prefix)")
+    p.add_argument("--max-age", type=int, default=365, metavar="DAYS",
+                   help="call passwords older than this old (default 365, 0 to skip)")
+    p.set_defaults(run=cmd_audit)
 
     p = sub.add_parser("tags", help="list tags")
     p.set_defaults(run=cmd_tags)
